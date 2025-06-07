@@ -18,10 +18,13 @@ public class GridBuildingSystem : MonoBehaviour
     [Header("Global Kaynaklar ve UI")]
     [SerializeField] private TextMeshProUGUI emissionText;
     [SerializeField] private TextMeshProUGUI moneyText;
+    [SerializeField] private TextMeshProUGUI timerText; // Timer için UI Text
     [SerializeField] public float totalEmission = 5f;
     [SerializeField] public float money = 1000;
 
     [Header("Oyun Durumu Ayarlarý")]
+    [Tooltip("Saniye cinsinden oyun süresi.")]
+    [SerializeField] private float gameDuration = 300f; // 5 dakika
     [Tooltip("Bu emisyon deðerine ulaþýldýðýnda oyun kaybedilir.")]
     [SerializeField] private float emissionLoseThreshold = 500f;
     [Tooltip("Bu emisyon deðerine ulaþýldýðýnda oyun kazanýlýr.")]
@@ -75,10 +78,11 @@ public class GridBuildingSystem : MonoBehaviour
     private GameObject previewObject;
     private GameObject deletionMarkerInstance;
     private GameObject currentActiveMarker;
+    private float currentTime; // Mevcut zamaný tutar
 
     private Dictionary<Vector3, GameObject> placedObjects = new Dictionary<Vector3, GameObject>();
     private bool isDeleting = false;
-    private bool isGameOver = false; // Oyunun bitip bitmediðini kontrol eder
+    public bool isGameOver = false; // Oyunun bitip bitmediðini kontrol eder
 
     private void Awake()
     {
@@ -95,6 +99,8 @@ public class GridBuildingSystem : MonoBehaviour
     void Start()
     {
         mainCamera = Camera.main;
+        currentTime = gameDuration; // Zamanlayýcýyý baþlat
+
         // Baþlangýçta panelleri gizle
         if (winPanel != null) winPanel.SetActive(false);
         if (losePanel != null) losePanel.SetActive(false);
@@ -104,8 +110,7 @@ public class GridBuildingSystem : MonoBehaviour
     void Update()
     {
         // UI güncellemeleri oyun bitse bile devam edebilir.
-        emissionText.text = totalEmission.ToString("F0") + " / " + emissionLoseThreshold;
-        moneyText.text = money.ToString("N0") + "$";
+        UpdateResourceUI();
 
         // Oyun bittiyse, kontrolleri ve diðer iþlemleri atla.
         if (isGameOver)
@@ -113,10 +118,34 @@ public class GridBuildingSystem : MonoBehaviour
             return;
         }
 
+        UpdateTimer();
         HandleMousePosition();
         HandleInput();
         UpdateActiveMarkerVisuals();
         CheckForEndGameConditions();
+    }
+
+    private void UpdateResourceUI()
+    {
+        emissionText.text = totalEmission.ToString("F0") + " / " + emissionLoseThreshold;
+        moneyText.text = money.ToString("N0") + "$";
+    }
+
+    private void UpdateTimer()
+    {
+        currentTime -= Time.deltaTime;
+        if (currentTime < 0)
+        {
+            currentTime = 0;
+        }
+
+        // Zamaný dakika ve saniye formatýnda göster
+        float minutes = Mathf.FloorToInt(currentTime / 60);
+        float seconds = Mathf.FloorToInt(currentTime % 60);
+        if (timerText != null)
+        {
+            timerText.text = string.Format("{0:00}:{1:00}", minutes, seconds);
+        }
     }
 
     private void HandleInput()
@@ -156,8 +185,6 @@ public class GridBuildingSystem : MonoBehaviour
         if (buildingComponent.value > money)
         {
             Debug.LogWarning("Yeterli paran yok!");
-            // Opsiyonel: Yetersiz bakiye için bir uyarý yazýsý gösterilebilir.
-            // FloatingTextManager.Instance.ShowFloatingText("Yetersiz Bakiye!", Color.yellow, previewObject.transform);
             return;
         }
 
@@ -168,7 +195,6 @@ public class GridBuildingSystem : MonoBehaviour
         {
             GameObject newObject = Instantiate(_prefabToBuild, targetPosition, Quaternion.identity);
             placedObjects.Add(targetPosition, newObject);
-            Debug.Log(_prefabToBuild.name + " objesi " + targetPosition + " pozisyonuna yerleþtirildi.");
             newObject.GetComponent<Building>().isBuilded = true;
             FloatingTextManager.Instance.ShowFloatingText("-" + buildingComponent.value + "$", Color.red, newObject.transform);
         }
@@ -182,20 +208,31 @@ public class GridBuildingSystem : MonoBehaviour
 
     private void CheckForEndGameConditions()
     {
-        // Önce kaybetme durumunu kontrol et
+        // Önce kaybetme durumlarýný kontrol et
         if (totalEmission >= emissionLoseThreshold)
         {
-            TriggerGameOver(false); // Kaybettin
+            TriggerGameOver(false); // Emisyon limiti aþýldýðý için kaybettin
         }
-        // Sonra kazanma durumunu kontrol et
-        else if (totalEmission <= emissionWinThreshold)
+        else if (currentTime <= 0)
         {
-            TriggerGameOver(true); // Kazandýn
+            // Süre bittiðinde kazanma koþulu saðlanmadýysa kaybet
+            if (totalEmission > emissionWinThreshold)
+            {
+                TriggerGameOver(false); // Süre bittiði için kaybettin
+            }
+        }
+
+        // Sonra kazanma durumunu kontrol et
+        if (totalEmission <= emissionWinThreshold)
+        {
+            TriggerGameOver(true); // Emisyon hedefine ulaþýldýðý için kazandýn
         }
     }
 
     private void TriggerGameOver(bool didWin)
     {
+        if (isGameOver) return; // Oyun zaten bittiyse tekrar tetikleme
+
         isGameOver = true;
 
         // Aktif olan önizleme veya silme iþaretçisini gizle
@@ -211,7 +248,7 @@ public class GridBuildingSystem : MonoBehaviour
         }
         else
         {
-            Debug.Log("OYUN KAYBEDÝLDÝ! Emisyon limiti aþýldý.");
+            Debug.Log("OYUN KAYBEDÝLDÝ!");
             if (losePanel != null) losePanel.SetActive(true);
         }
     }

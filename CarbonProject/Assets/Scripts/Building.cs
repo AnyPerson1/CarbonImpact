@@ -38,7 +38,7 @@ public class Building : MonoBehaviour
 
         timer += Time.deltaTime;
 
-        if (timer >= interval)
+        if (timer >= interval && !GridBuildingSystem.Instance.isGameOver)
         {
             // Kaynaklarý üret
             ProduceResources();
@@ -48,9 +48,12 @@ public class Building : MonoBehaviour
 
     private void ProduceResources()
     {
+
         controller.money += income;
         controller.totalEmission += carbonImpact;
+        string carbonText = (carbonImpact > 0 ? "+" : "") + carbonImpact.ToString("F1");
+        Color carbonColor = carbonImpact > 0 ? Color.black : Color.white;
         FloatingTextManager.Instance.ShowFloatingText("+"+income+"$",Color.green, transform, new Vector3(0,1.5f,0));
-        FloatingTextManager.Instance.ShowFloatingText("+"+carbonImpact,Color.black, transform, new Vector3(0, 2.5f, 0));
+        FloatingTextManager.Instance.ShowFloatingText(carbonText,carbonColor, transform, new Vector3(0, 2.5f, 0));
     }
 }
