@@ -1,56 +1,126 @@
 using System.Collections;
 using System.Collections.Generic;
+using TMPro;
 using UnityEngine;
-using UnityEngine.Rendering; // BlendMode için gerekli
+using UnityEngine.Rendering;
 
 public class GridBuildingSystem : MonoBehaviour
 {
+    public static GridBuildingSystem Instance { get; private set; }
+
     [Header("Grid Ayarlarý")]
     [SerializeField] private float gridSize = 1f;
     [SerializeField] private LayerMask groundLayerMask;
 
     [Header("Prefab Ayarlarý")]
-    [SerializeField] private List<GameObject> prefabs;
-    [SerializeField] private GameObject deletionMarkerPrefab; // Silme modu için kýrmýzý iþaretleyici prefab'ý (opsiyonel)
+    [SerializeField] private GameObject deletionMarkerPrefab;
+
+    [Header("Global Kaynaklar ve UI")]
+    [SerializeField] private TextMeshProUGUI emissionText;
+    [SerializeField] private TextMeshProUGUI moneyText;
+    [SerializeField] public float totalEmission = 5f;
+    [SerializeField] public float money = 1000;
+
+    [Header("Oyun Durumu Ayarlarý")]
+    [Tooltip("Bu emisyon deðerine ulaþýldýðýnda oyun kaybedilir.")]
+    [SerializeField] private float emissionLoseThreshold = 500f;
+    [Tooltip("Bu emisyon deðerine ulaþýldýðýnda oyun kazanýlýr.")]
+    [SerializeField] private float emissionWinThreshold = 0f;
+    [SerializeField] private GameObject winPanel;
+    [SerializeField] private GameObject losePanel;
+
+    public GameObject PrefabToBuild
+    {
+        get => _prefabToBuild;
+        set
+        {
+            if (isGameOver) return; // Oyun bittiyse prefab seçimi yapma
+
+            GameObject previousPrefab = _prefabToBuild;
+            _prefabToBuild = value;
+
+            if (_prefabToBuild != null)
+            {
+                bool wasDeleting = isDeleting;
+                isDeleting = false;
+
+                if (wasDeleting)
+                {
+                    Debug.Log("Ýnþa moduna geçildi (Silme modu deaktif edildi).");
+                }
+                else if (previousPrefab == null)
+                {
+                    Debug.Log("Ýnþa moduna geçildi.");
+                }
+                UpdatePreviewObject();
+                Debug.Log(_prefabToBuild.name + " seçildi.");
+            }
+            else
+            {
+                if (previewObject != null)
+                {
+                    Destroy(previewObject);
+                    previewObject = null;
+                }
+                if (previousPrefab != null)
+                {
+                    Debug.Log(previousPrefab.name + " seçimi kaldýrýldý. Önizleme temizlendi.");
+                }
+            }
+        }
+    }
+    private GameObject _prefabToBuild;
 
     private Camera mainCamera;
-    private int activePrefabIndex = 0;
-    private GameObject previewObject; // Ýnþa önizlemesi
-    private GameObject deletionMarkerInstance; // Silme iþaretçisinin instance'ý
-    private GameObject currentActiveMarker; // O an aktif olan iþaretçi (ya previewObject ya da deletionMarkerInstance)
+    private GameObject previewObject;
+    private GameObject deletionMarkerInstance;
+    private GameObject currentActiveMarker;
 
     private Dictionary<Vector3, GameObject> placedObjects = new Dictionary<Vector3, GameObject>();
     private bool isDeleting = false;
+    private bool isGameOver = false; // Oyunun bitip bitmediðini kontrol eder
+
+    private void Awake()
+    {
+        if (Instance != null && Instance != this)
+        {
+            Destroy(gameObject);
+        }
+        else
+        {
+            Instance = this;
+        }
+    }
 
     void Start()
     {
         mainCamera = Camera.main;
-        // Prefab listesi boþ deðilse ilk önizlemeyi oluþtur
-        if (prefabs != null && prefabs.Count > 0)
-        {
-            UpdatePreviewObject();
-        }
-        UpdateActiveMarkerVisuals(); // Mod'a göre doðru iþaretçiyi aktif et
+        // Baþlangýçta panelleri gizle
+        if (winPanel != null) winPanel.SetActive(false);
+        if (losePanel != null) losePanel.SetActive(false);
+        UpdateActiveMarkerVisuals();
     }
 
     void Update()
     {
+        // UI güncellemeleri oyun bitse bile devam edebilir.
+        emissionText.text = totalEmission.ToString("F0") + " / " + emissionLoseThreshold;
+        moneyText.text = money.ToString("N0") + "$";
+
+        // Oyun bittiyse, kontrolleri ve diðer iþlemleri atla.
+        if (isGameOver)
+        {
+            return;
+        }
+
         HandleMousePosition();
         HandleInput();
-        UpdateActiveMarkerVisuals(); // Her frame mod'a göre iþaretçileri güncelle
+        UpdateActiveMarkerVisuals();
+        CheckForEndGameConditions();
     }
 
     private void HandleInput()
     {
-        for (int i = 0; i < prefabs.Count && i < 9; i++)
-        {
-            if (Input.GetKeyDown(KeyCode.Alpha1 + i))
-            {
-                SetActivePrefab(i);
-                break;
-            }
-        }
-
         if (Input.GetKeyDown(KeyCode.Alpha0))
         {
             if (!isDeleting)
@@ -62,22 +132,91 @@ public class GridBuildingSystem : MonoBehaviour
 
         if (Input.GetMouseButtonDown(0))
         {
-            // UI üzerinde olup olmadýðýmýzý kontrol et, eðer UI üzerindeysek iþlem yapma
-            // if (UnityEngine.EventSystems.EventSystem.current.IsPointerOverGameObject())
-            // {
-            //     return;
-            // }
+            if (UnityEngine.EventSystems.EventSystem.current.IsPointerOverGameObject())
+            {
+                return;
+            }
 
             if (isDeleting)
             {
                 DeleteObjectAtMousePosition();
             }
-            else if (previewObject != null && previewObject.activeSelf)
+            else if (!isDeleting && _prefabToBuild != null && previewObject != null && previewObject.activeSelf)
             {
                 PlaceObject();
             }
         }
     }
+
+    private void PlaceObject()
+    {
+        if (_prefabToBuild == null || previewObject == null || !previewObject.activeSelf) return;
+
+        Building buildingComponent = _prefabToBuild.GetComponent<Building>();
+        if (buildingComponent.value > money)
+        {
+            Debug.LogWarning("Yeterli paran yok!");
+            // Opsiyonel: Yetersiz bakiye için bir uyarý yazýsý gösterilebilir.
+            // FloatingTextManager.Instance.ShowFloatingText("Yetersiz Bakiye!", Color.yellow, previewObject.transform);
+            return;
+        }
+
+        money -= buildingComponent.value;
+
+        Vector3 targetPosition = previewObject.transform.position;
+        if (!placedObjects.ContainsKey(targetPosition))
+        {
+            GameObject newObject = Instantiate(_prefabToBuild, targetPosition, Quaternion.identity);
+            placedObjects.Add(targetPosition, newObject);
+            Debug.Log(_prefabToBuild.name + " objesi " + targetPosition + " pozisyonuna yerleþtirildi.");
+            newObject.GetComponent<Building>().isBuilded = true;
+            FloatingTextManager.Instance.ShowFloatingText("-" + buildingComponent.value + "$", Color.red, newObject.transform);
+        }
+        else
+        {
+            Debug.LogWarning("Bu pozisyon (" + targetPosition + ") zaten dolu! Yerleþtirme yapýlamadý.");
+        }
+    }
+
+    // --- OYUN DURUMU KONTROL METODLARI ---
+
+    private void CheckForEndGameConditions()
+    {
+        // Önce kaybetme durumunu kontrol et
+        if (totalEmission >= emissionLoseThreshold)
+        {
+            TriggerGameOver(false); // Kaybettin
+        }
+        // Sonra kazanma durumunu kontrol et
+        else if (totalEmission <= emissionWinThreshold)
+        {
+            TriggerGameOver(true); // Kazandýn
+        }
+    }
+
+    private void TriggerGameOver(bool didWin)
+    {
+        isGameOver = true;
+
+        // Aktif olan önizleme veya silme iþaretçisini gizle
+        if (currentActiveMarker != null)
+        {
+            currentActiveMarker.SetActive(false);
+        }
+
+        if (didWin)
+        {
+            Debug.Log("OYUN KAZANILDI! Emisyon hedefine ulaþýldý.");
+            if (winPanel != null) winPanel.SetActive(true);
+        }
+        else
+        {
+            Debug.Log("OYUN KAYBEDÝLDÝ! Emisyon limiti aþýldý.");
+            if (losePanel != null) losePanel.SetActive(true);
+        }
+    }
+
+    // --- MEVCUT DÝÐER METODLAR ---
 
     private void UpdateActiveMarkerVisuals()
     {
@@ -90,18 +229,34 @@ public class GridBuildingSystem : MonoBehaviour
             EnsureDeletionMarkerIsActive();
             currentActiveMarker = deletionMarkerInstance;
         }
-        else // Ýnþa modunda
+        else
         {
             if (deletionMarkerInstance != null && deletionMarkerInstance.activeSelf)
             {
                 deletionMarkerInstance.SetActive(false);
             }
 
-            if (previewObject != null && !previewObject.activeSelf)
+            if (_prefabToBuild != null)
             {
-                previewObject.SetActive(true);
+                if (previewObject == null)
+                {
+                    UpdatePreviewObject();
+                }
+
+                if (previewObject != null && !previewObject.activeSelf)
+                {
+                    previewObject.SetActive(true);
+                }
+                currentActiveMarker = previewObject;
             }
-            currentActiveMarker = previewObject;
+            else
+            {
+                if (previewObject != null && previewObject.activeSelf)
+                {
+                    previewObject.SetActive(false);
+                }
+                currentActiveMarker = null;
+            }
         }
     }
 
@@ -117,9 +272,7 @@ public class GridBuildingSystem : MonoBehaviour
             {
                 deletionMarkerInstance = GameObject.CreatePrimitive(PrimitiveType.Cube);
                 deletionMarkerInstance.transform.localScale = Vector3.one * gridSize * 0.9f;
-
                 Renderer markerRenderer = deletionMarkerInstance.GetComponent<Renderer>();
-                // URP uyumlu kýrmýzý transparan materyal oluþtur
                 markerRenderer.material = CreateTransparentURPMaterial(new Color(1.0f, 0.0f, 0.0f, 0.5f));
             }
 
@@ -151,7 +304,6 @@ public class GridBuildingSystem : MonoBehaviour
             }
         }
 
-        // Ýþaretçiyi sadece fare zemin üzerindeyken göster
         if (currentActiveMarker != null && currentActiveMarker.activeSelf != markerShouldBeVisible)
         {
             currentActiveMarker.SetActive(markerShouldBeVisible);
@@ -164,23 +316,6 @@ public class GridBuildingSystem : MonoBehaviour
         float snappedY = Mathf.Round(rawPosition.y / gridSize) * gridSize;
         float snappedZ = Mathf.Round(rawPosition.z / gridSize) * gridSize;
         return new Vector3(snappedX, snappedY, snappedZ);
-    }
-
-    private void PlaceObject()
-    {
-        if (previewObject == null || !previewObject.activeSelf) return;
-
-        Vector3 targetPosition = previewObject.transform.position;
-        if (!placedObjects.ContainsKey(targetPosition))
-        {
-            GameObject newObject = Instantiate(prefabs[activePrefabIndex], targetPosition, Quaternion.identity);
-            placedObjects.Add(targetPosition, newObject);
-            Debug.Log(prefabs[activePrefabIndex].name + " objesi " + targetPosition + " pozisyonuna yerleþtirildi.");
-        }
-        else
-        {
-            Debug.LogWarning("Bu pozisyon (" + targetPosition + ") zaten dolu! Yerleþtirme yapýlamadý.");
-        }
     }
 
     private void DeleteObjectAtMousePosition()
@@ -198,23 +333,8 @@ public class GridBuildingSystem : MonoBehaviour
             }
             else
             {
-                Debug.Log("Bu pozisyonda (" + targetPosition + ") silinecek bir obje yok.");
+                Debug.Log("Bu pozisyonda (" + targetPosition + ") silinecek bir obje yok (Grid tabanlý kontrol).");
             }
-        }
-    }
-
-    public void SetActivePrefab(int newIndex)
-    {
-        if (newIndex >= 0 && newIndex < prefabs.Count)
-        {
-            if (isDeleting || activePrefabIndex != newIndex)
-            {
-                isDeleting = false;
-                Debug.Log("Ýnþa moduna geçildi.");
-            }
-            activePrefabIndex = newIndex;
-            UpdatePreviewObject();
-            Debug.Log(prefabs[activePrefabIndex].name + " seçildi.");
         }
     }
 
@@ -223,11 +343,12 @@ public class GridBuildingSystem : MonoBehaviour
         if (previewObject != null)
         {
             Destroy(previewObject);
+            previewObject = null;
         }
 
-        if (prefabs != null && prefabs.Count > 0 && activePrefabIndex < prefabs.Count)
+        if (_prefabToBuild != null)
         {
-            previewObject = Instantiate(prefabs[activePrefabIndex]);
+            previewObject = Instantiate(_prefabToBuild);
             Collider previewCollider = previewObject.GetComponent<Collider>();
             if (previewCollider != null)
             {
@@ -235,7 +356,6 @@ public class GridBuildingSystem : MonoBehaviour
             }
 
             Renderer[] renderers = previewObject.GetComponentsInChildren<Renderer>();
-            // URP uyumlu yeþil transparan materyal oluþtur
             Material previewMat = CreateTransparentURPMaterial(new Color(0.0f, 1.0f, 0.0f, 0.5f));
 
             if (previewMat != null)
@@ -246,20 +366,10 @@ public class GridBuildingSystem : MonoBehaviour
                 }
             }
         }
-        else
-        {
-            previewObject = null;
-        }
     }
 
-    /// <summary>
-    /// URP için belirli bir renkte transparan bir materyal oluþturur.
-    /// </summary>
-    /// <param name="color">Materyalin rengi (alpha deðeri dahil).</param>
-    /// <returns>URP uyumlu transparan materyal.</returns>
     private Material CreateTransparentURPMaterial(Color color)
     {
-        // URP'nin varsayýlan Lit shader'ýný bul
         Shader urpLitShader = Shader.Find("Universal Render Pipeline/Lit");
         if (urpLitShader == null)
         {
@@ -268,20 +378,15 @@ public class GridBuildingSystem : MonoBehaviour
         }
 
         Material material = new Material(urpLitShader);
-
-        // URP Lit Shader'da transparanlýk için materyal ayarlarý
-        material.SetFloat("_Surface", 1); // Surface Type'ý Transparent yap (0=Opaque, 1=Transparent)
-        material.SetFloat("_Blend", 0);   // Blend Mode'u Alpha yap (0=Alpha, 1=Premultiply, 2=Additive, 3=Multiply)
-        material.SetFloat("_ZWrite", 0);  // Derinlik yazmayý kapat
+        material.SetFloat("_Surface", 1); // Transparent
+        material.SetFloat("_Blend", 0);   // Alpha
+        material.SetFloat("_ZWrite", 0); // Disable ZWrite for proper transparency
         material.DisableKeyword("_ALPHATEST_ON");
         material.EnableKeyword("_SURFACE_TYPE_TRANSPARENT");
-        material.DisableKeyword("_ALPHAPREMULTIPLY_ON"); // Gerekirse bunu EnableKeyword("_ALPHABLEND_ON") ile deðiþtirin
+        material.DisableKeyword("_ALPHAPREMULTIPLY_ON");
         material.SetInt("_SrcBlend", (int)BlendMode.SrcAlpha);
         material.SetInt("_DstBlend", (int)BlendMode.OneMinusSrcAlpha);
-
-        // Ana rengi ayarla
         material.SetColor("_BaseColor", color);
-
         return material;
     }
 }
