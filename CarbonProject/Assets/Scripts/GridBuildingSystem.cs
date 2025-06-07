@@ -82,7 +82,7 @@ public class GridBuildingSystem : MonoBehaviour
 
     private Dictionary<Vector3, GameObject> placedObjects = new Dictionary<Vector3, GameObject>();
     private bool isDeleting = false;
-    public bool isGameOver = false; // Oyunun bitip bitmediðini kontrol eder
+    public bool isGameOver = false;
 
     private void Awake()
     {
@@ -193,7 +193,9 @@ public class GridBuildingSystem : MonoBehaviour
         Vector3 targetPosition = previewObject.transform.position;
         if (!placedObjects.ContainsKey(targetPosition))
         {
-            GameObject newObject = Instantiate(_prefabToBuild, targetPosition, Quaternion.identity);
+            Quaternion quaternion = Quaternion.identity;
+            quaternion.eulerAngles = new Vector3 (0, 180, 0);
+            GameObject newObject = Instantiate(_prefabToBuild, targetPosition, quaternion);
             placedObjects.Add(targetPosition, newObject);
             newObject.GetComponent<Building>().isBuilded = true;
             FloatingTextManager.Instance.ShowFloatingText("-" + buildingComponent.value + "$", Color.red, newObject.transform);
